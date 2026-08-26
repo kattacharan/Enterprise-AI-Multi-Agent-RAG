@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Enterprise Knowledge Assistant | Multi-Agent RAG</title>
+  <meta name="description" content="Multi-Agent Enterprise Knowledge Assistant powered by LangGraph, FAISS, Hugging Face, and FastAPI.">
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Marked for Markdown Rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand">
+          <div class="brand-icon">
+            <i data-lucide="network"></i>
+          </div>
+          <div class="brand-text">
+            <h2>Enterprise AI</h2>
+            <span class="badge-tag">Multi-Agent RAG</span>
+          </div>
+        </div>
+        <button id="btn-new-chat" class="btn-primary-ghost" title="Start New Conversation">
+          <i data-lucide="plus"></i>
+          <span>New Chat</span>
+        </button>
+      </div>
+
+      <!-- Conversations Section -->
+      <div class="sidebar-section">
+        <div class="section-title">
+          <span>Conversations</span>
+        </div>
+        <div id="conversation-list" class="conversation-list">
+          <div class="empty-state-sm">No previous conversations</div>
+        </div>
+      </div>
+
+      <!-- Knowledge Base Section -->
+      <div class="sidebar-section kb-section">
+        <div class="section-title">
+          <span>Knowledge Base</span>
+          <button id="btn-upload-modal" class="btn-icon-xs" title="Upload Document">
+            <i data-lucide="upload-cloud"></i>
+          </button>
+        </div>
+        <div id="kb-document-list" class="kb-document-list">
+          <div class="loading-spinner-sm"></div>
+        </div>
+      </div>
+
+      <!-- Sidebar Footer -->
+      <div class="sidebar-footer">
+        <div class="tech-stack-pills">
+          <span class="tech-pill">LangGraph</span>
+          <span class="tech-pill">FAISS</span>
+          <span class="tech-pill">HuggingFace</span>
+          <span class="tech-pill">FastAPI</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Top Navbar -->
+      <header class="top-nav">
+        <div class="nav-left">
+          <div class="status-indicator">
+            <span class="status-dot"></span>
+            <span class="status-label">Multi-Agent Workflow Active</span>
+          </div>
+        </div>
+        <div class="nav-right">
+          <div class="stat-badge" id="stat-vectors" title="Total vectors indexed in FAISS">
+            <i data-lucide="database"></i>
+            <span id="vector-count">0</span> Vectors
+          </div>
+          <div class="stat-badge" id="stat-docs" title="Total enterprise documents">
+            <i data-lucide="file-text"></i>
+            <span id="doc-count">0</span> Documents
+          </div>
+          <button id="btn-reindex" class="btn-secondary-sm" title="Reindex Knowledge Base">
+            <i data-lucide="refresh-cw"></i>
+            <span>Reindex</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- Chat Messages Container -->
+      <div class="chat-container">
+        <!-- Welcome Hero (shown when no messages) -->
+        <div id="welcome-hero" class="welcome-hero">
+          <div class="hero-icon-glow">
+            <i data-lucide="brain-circuit"></i>
+          </div>
+          <h1>Enterprise Knowledge Assistant</h1>
+          <p class="hero-subtitle">
+            Autonomous multi-agent intelligence for internal policies, engineering standards, and cloud governance.
+          </p>
+
+          <div class="agent-pipeline-preview">
+            <div class="pipe-node">
+              <div class="pipe-icon"><i data-lucide="compass"></i></div>
+              <div class="pipe-text"><strong>Planner</strong><span>Intent & Query Plan</span></div>
+            </div>
+            <div class="pipe-arrow"><i data-lucide="arrow-right"></i></div>
+            <div class="pipe-node">
+              <div class="pipe-icon"><i data-lucide="search"></i></div>
+              <div class="pipe-text"><strong>Retriever</strong><span>FAISS Vector Search</span></div>
+            </div>
+            <div class="pipe-arrow"><i data-lucide="arrow-right"></i></div>
+            <div class="pipe-node">
+              <div class="pipe-icon"><i data-lucide="shield-check"></i></div>
+              <div class="pipe-text"><strong>Verifier</strong><span>Relevance Grader</span></div>
+            </div>
+            <div class="pipe-arrow"><i data-lucide="arrow-right"></i></div>
+            <div class="pipe-node">
+              <div class="pipe-icon"><i data-lucide="sparkles"></i></div>
+              <div class="pipe-text"><strong>Synthesizer</strong><span>Cited Answer</span></div>
+            </div>
+          </div>
+
+          <div class="sample-queries-section">
+            <span class="sample-title">Ask about enterprise documents:</span>
+            <div class="query-chips">
+              <button class="query-chip" data-query="What is the remote work policy and equipment reimbursement stipend?">
+                <i data-lucide="laptop"></i> WFH Policy & Equipment Stipend
+              </button>
+              <button class="query-chip" data-query="What are our engineering PR code review and test coverage standards?">
+                <i data-lucide="git-pull-request"></i> Code Review & PR Standards
+              </button>
+              <button class="query-chip" data-query="What are the cloud security requirements for AWS KMS encryption and IAM?">
+                <i data-lucide="shield"></i> Cloud Security & Encryption Rules
+              </button>
+              <button class="query-chip" data-query="What is the PTO leave policy and annual learning budget?">
+                <i data-lucide="calendar"></i> PTO Leave & Learning Allowance
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Chat Stream -->
+        <div id="messages-wrapper" class="messages-wrapper hidden">
+          <div id="messages-list" class="messages-list"></div>
+        </div>
+      </div>
+
+      <!-- Chat Input Dock -->
+      <div class="chat-input-dock">
+        <form id="chat-form" class="chat-form">
+          <div class="input-wrapper">
+            <textarea
+              id="query-input"
+              rows="1"
+              placeholder="Ask anything about enterprise documents, policies, or engineering standards..."
+              required
+            ></textarea>
+            <button type="submit" id="btn-submit" class="btn-send" title="Send Query">
+              <i data-lucide="send"></i>
+            </button>
+          </div>
+        </form>
+        <div class="input-footer">
+          <span>Multi-agent workflow automatically executes retrieval, verification, and grounded citations.</span>
+        </div>
+      </div>
+    </main>
+
+    <!-- Document Upload Modal -->
+    <div id="upload-modal" class="modal-backdrop hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-title">
+            <i data-lucide="upload-cloud"></i>
+            <h3>Ingest Knowledge Document</h3>
+          </div>
+          <button id="btn-close-modal" class="btn-icon-close">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div id="drop-zone" class="drop-zone">
+            <i data-lucide="file-up" class="drop-icon"></i>
+            <p class="drop-main-text">Drag & drop document here or <span class="browse-link">browse</span></p>
+            <p class="drop-sub-text">Supported formats: PDF, Markdown (.md), Text (.txt), CSV</p>
+            <input type="file" id="file-input" class="hidden-file-input" accept=".pdf,.md,.markdown,.txt,.csv,.json">
+          </div>
+          <div id="selected-file-info" class="selected-file-info hidden">
+            <i data-lucide="file-text"></i>
+            <span id="selected-filename">filename.md</span>
+            <span id="selected-filesize" class="text-muted">(12 KB)</span>
+          </div>
+          <div id="upload-progress" class="upload-progress hidden">
+            <div class="progress-bar-fill"></div>
+            <span class="progress-text">Chunking & embedding into FAISS...</span>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="btn-cancel-upload" class="btn-secondary">Cancel</button>
+          <button id="btn-confirm-upload" class="btn-primary" disabled>
+            <i data-lucide="check"></i> Ingest & Index
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
