@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -10,9 +11,8 @@ except ImportError:
     try:
         from langchain.text_splitter import RecursiveCharacterTextSplitter
     except ImportError:
-        # Simple fallback text splitter if needed
         class RecursiveCharacterTextSplitter:
-            def __init__(self, chunk_size=600, chunk_overlap=100, separators=None):
+            def __init__(self, chunk_size=600, chunk_overlap=120, separators=None):
                 self.chunk_size = chunk_size
                 self.chunk_overlap = chunk_overlap
 
@@ -33,24 +33,59 @@ from backend.app.database.models import DocumentRecord, DocumentChunkRecord
 from backend.app.rag.vectorstore import vector_store_manager
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _extract_section_heading(text: str) -> Optional[str]:
+    """
+    Returns the first Markdown heading found in a chunk, or None.
+    Example: '## Remuneration Policy Objectives' → 'Remuneration Policy Objectives'
+    """
+    for line in text.splitlines():
+        line = line.strip()
+        m = re.match(r'^#{1,4}\s+(.+)', line)
+        if m:
+            return m.group(1).strip()
+    return None
+
+
+def _load_pdf_with_pages(file_path: str) -> List[Dict[str, Any]]:
+    """
+    Returns a list of {page_number (1-indexed), text} dicts for each PDF page.
+    Falls back to concatenated text if pypdf is unavailable.
+    """
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(file_path)
+        pages = []
+        for i, page in enumerate(reader.pages):
+            text = page.extract_text() or ""
+            if text.strip():
+                pages.append({"page_number": i + 1, "text": text})
+        return pages
+    except Exception as e:
+        print(f"[Ingest] PDF page extraction error ({e}); falling back to full-text.")
+        with open(file_path, "rb") as f:
+            try:
+                from pypdf import PdfReader
+                reader = PdfReader(f)
+                full = "\n\n".join(p.extract_text() or "" for p in reader.pages)
+            except Exception:
+                full = ""
+        return [{"page_number": 1, "text": full}]
+
+
 def load_file_content(file_path: str) -> str:
-    """Reads content from .txt, .md, or .pdf files."""
+    """Reads content from .txt, .md, or .pdf files (plain text, for seed docs)."""
     ext = os.path.splitext(file_path)[1].lower()
-    
     if ext in [".txt", ".md", ".markdown", ".csv", ".json"]:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             return f.read()
     elif ext == ".pdf":
-        try:
-            from pypdf import PdfReader
-            reader = PdfReader(file_path)
-            text_pages = [page.extract_text() or "" for page in reader.pages]
-            return "\n\n".join(text_pages)
-        except Exception as e:
-            print(f"[Ingest] Error reading PDF {file_path}: {e}")
-            return ""
+        pages = _load_pdf_with_pages(file_path)
+        return "\n\n".join(p["text"] for p in pages)
     else:
-        # Fallback to UTF-8 read
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             return f.read()
 
@@ -61,7 +96,8 @@ def ingest_document(
     db: Optional[Session] = None
 ) -> Dict[str, Any]:
     """
-    Chunks document, extracts metadata, indexes vectors in FAISS, and persists records in SQLite.
+    Chunks document, extracts rich metadata (page number, section heading),
+    indexes vectors in FAISS, and persists records in SQLite.
     """
     should_close_db = False
     if db is None:
@@ -73,26 +109,48 @@ def ingest_document(
         file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
         file_ext = os.path.splitext(filename)[1].lower()
 
-        # 1. Read document text
-        content = load_file_content(file_path)
-        if not content.strip():
-            raise ValueError(f"Document {filename} is empty or unreadable.")
+        # 1. Read document — PDF gets per-page metadata; others get flat text
+        is_pdf = file_ext == ".pdf"
 
-        # 2. Split into semantic chunks
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=600,
-            chunk_overlap=100,
+            chunk_size=settings.CHUNK_SIZE,
+            chunk_overlap=settings.CHUNK_OVERLAP,
             separators=["\n## ", "\n### ", "\n\n", "\n", ". ", " ", ""]
         )
-        raw_chunks = text_splitter.split_text(content)
 
-        # 3. Clean up any existing record for this filename to prevent duplicate entries
+        # Build a list of (chunk_text, page_number, section) tuples
+        chunks_with_meta: List[tuple] = []
+
+        if is_pdf and settings.INGEST_PDF_PAGE_NUMBERS:
+            pdf_pages = _load_pdf_with_pages(file_path)
+            if not pdf_pages:
+                raise ValueError(f"Document {filename} is empty or unreadable.")
+            for page_data in pdf_pages:
+                page_num = page_data["page_number"]
+                page_text = page_data["text"]
+                raw = text_splitter.split_text(page_text)
+                for chunk_text in raw:
+                    section = _extract_section_heading(chunk_text)
+                    chunks_with_meta.append((chunk_text, page_num, section))
+        else:
+            content = load_file_content(file_path)
+            if not content.strip():
+                raise ValueError(f"Document {filename} is empty or unreadable.")
+            raw = text_splitter.split_text(content)
+            for chunk_text in raw:
+                section = _extract_section_heading(chunk_text)
+                chunks_with_meta.append((chunk_text, None, section))
+
+        if not chunks_with_meta:
+            raise ValueError(f"No usable chunks produced from {filename}.")
+
+        # 2. Clean up any existing record for this filename
         existing_doc = db.query(DocumentRecord).filter(DocumentRecord.filename == filename).first()
         if existing_doc:
             db.delete(existing_doc)
             db.flush()
 
-        # Create fresh document record in SQLite
+        # 3. Create fresh document record
         doc_id = str(uuid.uuid4())
         doc_record = DocumentRecord(
             id=doc_id,
@@ -100,7 +158,7 @@ def ingest_document(
             file_path=file_path,
             file_type=file_ext.replace(".", "") or "txt",
             file_size_bytes=file_size,
-            chunk_count=len(raw_chunks),
+            chunk_count=len(chunks_with_meta),
             status="indexed"
         )
         db.add(doc_record)
@@ -108,17 +166,18 @@ def ingest_document(
 
         # 4. Prepare LangChain Document objects and DB chunk records
         langchain_docs: List[Document] = []
-        for idx, chunk_text in enumerate(raw_chunks):
+        for idx, (chunk_text, page_num, section) in enumerate(chunks_with_meta):
             chunk_id = str(uuid.uuid4())
             chunk_metadata = {
                 "document_id": doc_id,
                 "chunk_id": chunk_id,
                 "filename": filename,
                 "chunk_index": idx,
-                "total_chunks": len(raw_chunks)
+                "total_chunks": len(chunks_with_meta),
+                "page_number": page_num,
+                "section": section,
             }
-            
-            # DB record
+
             chunk_record = DocumentChunkRecord(
                 id=chunk_id,
                 document_id=doc_id,
@@ -129,7 +188,6 @@ def ingest_document(
             )
             db.add(chunk_record)
 
-            # LangChain Doc for FAISS
             langchain_docs.append(
                 Document(
                     page_content=chunk_text,
@@ -145,7 +203,7 @@ def ingest_document(
         return {
             "document_id": doc_id,
             "filename": filename,
-            "chunk_count": len(raw_chunks),
+            "chunk_count": len(chunks_with_meta),
             "status": "indexed"
         }
 
@@ -156,6 +214,7 @@ def ingest_document(
     finally:
         if should_close_db:
             db.close()
+
 
 
 def seed_sample_documents():

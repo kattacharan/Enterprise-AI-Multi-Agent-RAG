@@ -1,4 +1,4 @@
-# Enterprise Human Resources & Workplace Policies
+﻿# Enterprise Human Resources & Workplace Policies
 
 ## 1. Remote Work and Work From Home (WFH) Guidelines
 - Employees are permitted up to 3 days of remote work per week under the hybrid model.

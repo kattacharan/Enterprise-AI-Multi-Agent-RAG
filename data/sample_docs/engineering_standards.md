@@ -1,4 +1,4 @@
-# Enterprise Software Engineering & Architecture Standards
+﻿# Enterprise Software Engineering & Architecture Standards
 
 ## 1. Code Review & Pull Request Standards
 - Every Pull Request (PR) requires at least two peer approvals before merging into `main` or `release` branches.
